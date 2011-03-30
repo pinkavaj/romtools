@@ -1,0 +1,338 @@
+This is set of tools for flashing ROM in Acer n30/n35.
+
+All this stuff and text originate from Wieniget repository, text
+it-self is slightli outdated!
+
+To build everything, just run "make".
+
+When that is done, connect the PDA to a USB port, power on the PDA
+with the power button pressed and keep the button pressed until the
+screen reads "DOWNLOAD IMG".  Then run "make dnw-n30" to flash Linux
+onto the device.
+
+* Status
+
+The kernel now supports the Acer n30, Acer n35 and Navman PiN 570.
+The Navman seems a bit unstable, so I would not recommend it for the
+moment.
+
+** What does work?
+
+The LCD works fine.
+
+The backlight works fine and uses the kernel backlight framework.
+
+The touch screen works fine with the input framework.  
+USB host works (n30), I've used both a USB keyboard and a PL2302 serial
+converter with it.
+
+USB device works.  I've been using it with the CDC Ethernet gadget
+driver.
+
+SD/MMC works including hot swap.  A 128 MByte SD card works fine, a
+MMCPlus card doesn't: "mmc0: card has unknown MMCA version 4".  This
+is probably a generic mmc problem.  If I patch the kernel to treat
+MMCA version 4 cards as MMCA version 3 cards they seem to work fine.
+I hope this won't break the card.
+
+NAND flash works. (FIXME: stop working in recent versions)
+
+Battery and "AC" status using the APM-bios emulation.
+
+The serial port works, but you need a serial cable or a soldering iron
+to be able to use it.
+
+IrDA works.
+
+Bluetooth on the n30 works.  On the n35 the same serial port is used
+for a GPS that also works.
+
+The hard buttons work.
+
+Suspend to RAM works.
+
+** What doesn't work?
+
+Audio.  I haven't looked at audio at all.  To get audio working it
+needs support in the s3c2410 and support for the UDA1380 audio codec.
+Additionally there may be some GPIO pin that can shut off the speaker
+amplifier.
+
+Power management in general.  There isn't much power management done
+at all.  There are probably a lot of things that can be done to save
+power and give the unit a longer battery life even without suspend.
+
+** Strange stuff
+
+The touch screen is "noisy" on my n30 so I have to average a lot of
+samples to get a good reading.  Is this the same on all n30s or is it
+just mine?  After buying an Acer n35 and testing it seems to be all
+Acer devices.
+
+USB device is a bit shaky and hangs sometimes when the cable is
+connected or disconnected.
+
+There seems to be a limit on the initrd size for the bootloader.
+Figure out why it is so.
+
+** Interesting things
+
+Power management.  There are probably a lot of devices on the n30 that
+can save power by being shut down.  For example:
+
+    B8, B9, B10 seems to control the LCD drivers.  It may be possible
+    to save some power by shutting down the drives when the display is
+    blanked.  If so, is there any special ordering requirements for
+    doing this?
+
+    E11, E12 are modified when Windows CE powers off.  What do they do?
+
+    G1 indicates that something is connected to our USB device
+    connector (probably by seeing of something is giving us +5V or
+    not).  If G1 is low we can shut down the USB device port and if
+    the USB host port is also off we can turn of the USB PLL.
+
+    If nothing is connected to our USB host port, D+ and D- are both
+    pulled down to ground.  If something is connected either D+ or D-
+    is pulled up to +3.3V/+5V.  Can we detect this with the USB device
+    suspended?  If we can, we can turn suspend the USB host port
+    unless there is something connected to the port and if the USB
+    device port is also suspended we can turn off the USB PLL.
+
+    There is no code to turn of the USB PLL right now.  I wonder how
+    much power can be saved by doing that.  Maybe it's possible to
+    just run extclk directly to the USB parts when idling so that they
+    kan keep their state machines alive while drawing very little
+    power.
+
+    Is there a way of shutting down the bluetooth chip?  There may be
+    a GPIO pin or command that forces it into sleep mode?
+
+    Is there a way of shutting down the IrDA transceiver?  There may
+    be a GPIO that shuts down the transmitter or receiver.
+
+    Is it possible to shut down the MMC port?  A GPIO?
+
+    Is it possible to shut down the serial port?  The RS232 port has
+    an auto shutdown, but it may be possible to force it to shut down
+    or to wake up.
+
+    Is there anything else that can be shut down to preserve power?
+
+    Can the CPU enter SLOW or IDLE mode when it has nothing to do?
+    I belive the current idle loop uses IDLE mode, SLOW mode could
+    save even more power.  According to the data sheet:
+
+        Typical normal power:   335 mW
+	Typical IDLE power:	177 mW
+	Typical SLEEP power:	 33 mW
+	Typical POWER_OFF:    50 uA (at what voltage?)
+
+    Is it possible to let the CPU enter a deep sleep mode where it
+    waits for a GPIO pin to change?
+
+    Is it possible to turn off /CE to the flash?  It will go to stand
+    by mode if /CE is high.  This may already be done automatically by
+    the nand driver.
+
+Suspend to RAM works now, I found a way to get the GPIO configuration
+during suspend so now I can get Linux to suspend to RAM and use as
+much current as Windows CE does in suspend.  But I have no idea what a
+lot of the GPIO pins do.
+
+Reverse engineer the NAND partition table and BINFS format.  Figure
+out how to use the existing bootloader so that it's possible to
+upgrade the kernel and root file system from within Linux.
+
+* Building a kernel for the device
+
+** Prerequisites
+
+These scripts to build an image for the n30.
+
+A working cross compiler for arm.  I'm using gcc-3.4.1 built with Dan
+Kegel's crosstool.  A patch for crosstool can be found in the archive.
+
+This recepie for building crosstool was contributed by Guylhem Aznar
+<guylhem@gmail.com>:
+
+    wget http://kegel.com/crosstool/crosstool-0.38.tar.gz
+    tar zxvf crosstool-0.38.tar.gz
+    patch -p0 < crosstool-0.38.diff
+    cd crosstool-0.38
+    edit the download tmp path and prefix to
+    /opt/crosstool/gcc-3.4.1-glibc-2.3.3/arm-9tdmi-linux-gnu instead of
+    /opt/crosstool
+    ./demo-arm9tdmi.sh
+
+An initrd.  The initrd I'm using can be downloaded from:
+
+    http://zoo.weinigel.se/n30/downloads/initrd.gz
+
+Note that my scripts won't work with a too large initrd.  An initrd
+built from Arjans GPE image doesn't work.  I can't understand why, but
+that's the way it is.  If someone fixes this, please let me know.
+
+quilt -- you can patch the kernel by hand if you prefer
+
+sudo -- or you can run things as root by hand
+
+You may need to upgrade to the latest Windows CE version from Acer to
+get the correct bootloader.  You can find the n30 firmware at:
+
+    http://support.acer-euro.com/drivers/handheld/n30.html
+    ftp://ftp.support.acer-euro.com/handheld/n30/osimage/
+
+For the n35 the firmware can be found in:
+
+    ftp://ftp.support.acer-euro.com/handheld/n35/osimage
+
+It's a pretty good idea to download this software anyways since it can
+be used to reflash Windows CE again if you would like to get rid of
+Linux (why on earth anyone would like to do that?).
+
+To restore Windows CE using a SD card, follow the instructions in:
+
+    n30 & n30 second edition sd card upgrade readme.txt
+
+The same procedure works for the Acer N35 with the N35 firmware.
+
+For the n30 it's possible to restore Windows CE over USB.  Extract the
+file called Acer_n30PDA.ubi from one of the Acer_n30SE_v1.00.11_*.rar
+files.  Then you can install Windows CE using the dnw tool the same
+way you install Linux into flash:
+
+    ./dnw Acer_n30PDA.ubi
+
+see the Download section for more information on how to do this.
+
+** Building
+
+Unpack n30.tar.gz.
+
+edit n30/Makefile to point at the cross compiler you're using.
+
+Save the initrd you want to use as n30/romtools/initrd .
+
+Download the 2.6.14 linux kernel and the H1940 patches that my patches
+are based on by running the following from the n30 directory:
+
+    make archive-download
+
+If you prefer, look at the Makefile in the archive-2.6.14 directory
+and copy the files there by hand.
+
+Start the build by running the following from the n30 directory:
+
+    make linux
+    make romtools
+
+This will unpack and build the Linux kernel and assemble a .ubi image
+suitable for downloading to the n30.
+
+** Downloading
+
+To download the image to the n30, eject any SD/MMC card, press and
+hold the power button while hard resetting the unit (turn on and off
+the switch next to the sync connector on the unit).  Keep the power
+button pressed until the display says "DOWNLOAD IMG".
+
+Start the download by running the following in the n30/romtools
+directory as root:
+
+    ./dnw linux.ubi
+
+The unit will be flashed with Linux.
+
+If you want to put back Windows do the same thing with Acer_n30PDA.ubi
+instead of linux.ubi.
+
+** Running GPE or Opie from internal flash
+
+Download one of the images from:
+
+    http://anymore.nl/ipaq/files/graphical_images/
+
+Boot using the initrd from my page.  Note that I have a new initrd.gz
+which is 977778 bytes that can be downloaded from:
+
+    http://zoo.weinigel.se/n30/downloads/initrd.gz
+
+Erase the root filesystem part of the flash:
+
+    flash_eraseall /dev/mtd3
+
+Mount the flash as a jffs2 filsystem, this will also format the file
+system:
+
+    mount -t jffs2 /dev/mtdblock3 /mnt
+
+Start receiving and unpacking the gpe image:
+
+    cd /mnt && nc -l -p 4444 | tar xvf -
+
+On your PC, do the following:
+
+    ifconfig usb0 192.168.131.102
+
+download the image with:
+
+    bzcat path/to/gpe-image-arjan-20051207.tar.bz2 | nc 192.168.131.201 4444
+
+or the corresponding for Opie.
+
+Wait until everything has been written to flash.  If you want to run
+opie, figure out which event device that corresponds to the touch
+screen, by doing the following for each event in /dev/input on the
+n30:
+
+    od -x /dev/input/event0
+
+Touch the screen.  When you see a lot of data you've found the device,
+so modify the following file to match:
+
+    /etc/profile.d/tslib.sh
+
+Finally, unmount the filsystem:
+
+    umount /mnt
+    sync
+
+[this is changed now and needs to be updated]
+
+Modify romtools/create_tags.c so that switch (0) says:
+
+    switch (5)
+
+instead.  Run make in the n30/romtools directory to build the new
+image and download the linux.ubi file as before.
+
+** Booting GPE or Opie from a MMC card
+
+Create an ext3 partiton on a SD/MMC card.  The following examples
+assume that mmc2 is the ext3 partition.  If you use a USB adapter
+it'll probably be called sda2 or something like that, but when the
+card is inserted in the n30 it will be mmc2.
+
+Format the ext3 partition with:
+
+    mke2fs -j /dev/mmc2
+
+Mount the partition and unpack the gpe image:
+
+    mount /dev/mmc2 /mnt
+    cd /mnt
+    bzcat path/to/gpe-image-arjan-20051207.tar.bz2 | tar xf -
+    cd
+    umount /mnt
+
+Modify romtools/create_tags.c the same ways as for the internal flash,
+but use:
+
+    switch (2)
+
+Run make in the n30/romtools directory to build the new image and
+download the linux.ubi file as before.
+
+Insert the MMC card in the n30 and it should boot GPE/Opie.
+
